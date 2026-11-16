@@ -60,7 +60,18 @@ class InformationMinimizer:
         convergence_reached = False
         count_minimizer_steps = 0
         total_information = self.initial_total_information
+        if not np.isfinite(total_information):
+            raise ValueError("Non-finite initial information in minimization")
+        if total_information < 0:
+            raise ValueError("Negative initial information in minimization")
+        # Keep only the variables being optimized before rebuilding their
+        # reductions; callers may already have cached lower levels.
+        rho_dict = LatticeDict(rho_dict.items_at_level(self._config.min_l))
         rho_dict += build_lower_level(rho_dict, self._config.min_l)
+
+        if total_information == 0:
+            logger.info("Minimization steps to reach convergence: 0 (zero initial information)")
+            return rho_dict
 
         while not convergence_reached:
             # n_max + 1 is necessary here to include the last site
@@ -134,9 +145,34 @@ class InformationMinimizer:
         new_total_information = total_mutual_information_at_level(
             self._config.min_l, rho_dict
         )
-        convergence_reached = (
-            (total_information - new_total_information) / self.initial_total_information
-            < self._config.minimization_config.minimization_tolerance
+        if not all(np.isfinite(value) for value in (
+            total_information, new_total_information, self.initial_total_information
+        )):
+            raise ValueError("Non-finite information in minimization convergence check")
+        if self.initial_total_information < 0:
+            raise ValueError("Negative initial information in minimization")
+        decrease = total_information - new_total_information
+        if decrease < 0:
+            logger.warning(
+                "Information increased during minimization; continuing without "
+                "declaring convergence: before=%s, after=%s, initial=%s",
+                total_information, new_total_information, self.initial_total_information,
+            )
+            return False, new_total_information
+        # Pure relative-decrease criterion, expressed without division. Zero
+        # initial information is handled before entering the minimization loop.
+        threshold = (
+            self._config.minimization_config.minimization_tolerance
+            * self.initial_total_information
+        )
+        # An exactly unchanged objective also satisfies the relative criterion
+        # for positive initial information, even if the product underflows.
+        convergence_reached = decrease == 0 or decrease < threshold
+        logger.debug(
+            "Minimization information: before=%s, after=%s, decrease=%s, "
+            "stopping_threshold=%s, converged=%s",
+            total_information, new_total_information, decrease,
+            threshold, convergence_reached,
         )
 
         return convergence_reached, new_total_information
