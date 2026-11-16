@@ -121,6 +121,13 @@ class InformationMinimizer:
             # builds the lower level for all worker processes
             rho_dict += build_lower_level(rho_dict, level)
 
+        # Current gradients require level ell - R, not only ell - 1. The
+        # immediate reductions are already present above (MPI) or from the
+        # minimization setup (serial). Overwrite deeper cached levels rather
+        # than adding a second copy on subsequent Newton/CG calls.
+        for ell in range(level - 1, level - self._system_operator.range_, -1):
+            rho_dict.update(build_lower_level(rho_dict, ell))
+
         eig_dict = diagonalize_rho_dict(level, rho_dict)
         if checks:
             self._check_eigenvalues(eig_dict)

@@ -117,23 +117,23 @@ class Projector:
 
     def projector_to_trace_free_subspace(self, x: np.ndarray) -> np.ndarray:
         """
-        Computes the projector onto the space of traceless matrices
-        obtained by tracing out range_-many sites for both sides of the operators
-        (independently, i.e. either right or left) at the right and left end
-        of an operator x given as np.ndarray
+        Project onto variations with zero one-site partial traces at both ends.
+
+        This preserves the immediately lower-level density matrices, and hence
+        all lower levels, independently of the Hamiltonian interaction range.
+        See Eq. (19) and Eqs. (21)-(22) in PRX Quantum 5, 020352.
         """
 
-        # trace out range sites on the left
-        T_L = ptrace(x, self.range_, end="left")
+        # Trace out one site on the left.
+        T_L = ptrace(x, 1, end="left")
 
-        # build the projector onto the space of traceless matrices on the left
-        P_L = x - np.kron(np.eye(int(2**self.range_)) * 1 / (2**self.range_), T_L)
+        # Remove the component with nonzero left partial trace.
+        P_L = x - np.kron(np.eye(2) / 2, T_L)
 
-        # use the result and trace out range_ sites on the right
-        T_R = ptrace(P_L, self.range_, end="right")
+        # Apply the right one-site constraint to the left-projected matrix.
+        T_R = ptrace(P_L, 1, end="right")
 
-        # build the projector onto the space of traceless matrices on the left and right
-        P_L_R = P_L - np.kron(T_R, np.eye(int(2**self.range_)) * 1 / (2**self.range_))
+        P_L_R = P_L - np.kron(T_R, np.eye(2) / 2)
 
         return P_L_R
 
@@ -142,21 +142,26 @@ class Projector:
         key: LatticeKey,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Computes the current operators as matrices.
-        Eq. (25) and Eq. (28) in PRX QUANTUM 5, 020352
+        Compute the current constraint directions from level ell - R states.
+        Eq. (25) and Eq. (28) in PRX QUANTUM 5, 020352.
         """
-        # Note, to compute the f_n^l and g_n^l we need the rho_dict entries at level ell,
-        # ell-1 and ell-2. Be sure to hand over the right rho_dict to this function
+        # The lower blocks have centers n +/- R/2. Enlarging each by R sites
+        # returns to the original block (n, ell), also for R > 1.
         if key.level < 3:
             raise ValueError(
                 "Ill-defined projectors: require at least level 3 density matrices for minimization"
             )
+        elif self.range_ > key.level:
+            raise ValueError(
+                f"Current constraints require level >= Hamiltonian range: "
+                f"level={key.level}, range={self.range_}"
+            )
         else:
             g_left = self._get_commutator_of_info_gradient_with_subsystem_hamiltonian(
-                key.get_lower_level_right(), "left"
-            )  # 2x2 matrix is added on the left -> g_left∫
+                key.get_lower_level_right(self.range_), "left"
+            )
             g_right = self._get_commutator_of_info_gradient_with_subsystem_hamiltonian(
-                key.get_lower_level_left(), "right"
+                key.get_lower_level_left(self.range_), "right"
             )
 
             g_left = self.projector_to_trace_free_subspace(g_left)
@@ -175,7 +180,12 @@ class Projector:
     def _get_commutator_of_info_gradient_with_subsystem_hamiltonian(
         self, key: LatticeKey, orientation: str
     ) -> np.ndarray:
-        """Computes the commutator of Eq. (25) of PRX QUANTUM 5, 020352"""
+        """Build a current direction from a level ell - R block.
+
+        The existing common factor 1/2 is retained in both terms. It cancels
+        from the current constraint projector and leaves the R=1 arithmetic
+        unchanged.
+        """
         H_c = self._system_operator.subsystem_hamiltonian[key]
         if orientation == "left":
             # get the relevant parts of the information gradient
